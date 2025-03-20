@@ -13,7 +13,7 @@ jobs:
   builda64:
     runs-on: [self-hosted, arm64]
     steps:
-      - name: Set tag  name
+      - name: Set tag name
         run: |
           if [ "${GITHUB_BASE_REF}" = 'main' ]; then
             echo "WKDEV_SDK_TAG=arm64" >> "${GITHUB_ENV}"
