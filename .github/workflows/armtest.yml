@@ -22,7 +22,7 @@ jobs:
 
       - name: Install podman
         #run: sudo apt-get update && sudo apt-get -y install podman fuse-overlayfs
-        run: 
+        run: |
           export ubuntu_version='22.04'
           export key_url="https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/unstable/xUbuntu_${ubuntu_version}/Release.key"
           export sources_url="https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/unstable/xUbuntu_${ubuntu_version}"
