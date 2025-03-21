@@ -113,13 +113,16 @@ jobs:
       - name: Download images
         uses: actions/download-artifact@v4
         with:
+          path: images
           pattern: wkdev-sdk-*.tar
           merge-multiple: true
+      - run: ls -al
+      - run: ls -al ./images
 
       - name: Deploy image
         run: |
-          podman load < webkit-container-sdk/wkdev-sdk-a64.tar
-          podman load < webkit-container-sdk/wkdev-sdk-intel.tar
+          podman load < ./images/wkdev-sdk-a64.tar
+          podman load < ./images/wkdev-sdk-intel.tar
           echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io --username=${GITHUB_REPOSITORY_OWNER} --password-stdin
           podman manifest create $REPO:$WKDEV_SDK_TAG
           for IMGTAG in arm64 intel; do
