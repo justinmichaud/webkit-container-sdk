@@ -98,7 +98,7 @@ jobs:
         run: |
           echo "WKDEV_SDK_TAG=latest" >> "${GITHUB_ENV}"
           echo "WKDEV_SDK_CONTAINER_REGISTRY_USER_NAME=$(echo ${GITHUB_REPOSITORY_OWNER} | tr '[:upper:]' '[:lower:]')" >> "${GITHUB_ENV}"
-          echo "REPO=$WKDEV_SDK_CONTAINER_REGISTRY_USER_NAME/wkdev-sdk" >> "${GITHUB_ENV}"
+          echo "REPO=$(echo ${GITHUB_REPOSITORY_OWNER} | tr '[:upper:]' '[:lower:]')/wkdev-sdk" >> "${GITHUB_ENV}"
 
       - name: Install podman
         run: sudo apt-get update && sudo apt-get -y install podman fuse-overlayfs
