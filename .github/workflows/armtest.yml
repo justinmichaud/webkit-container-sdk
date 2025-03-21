@@ -118,11 +118,12 @@ jobs:
 
       - name: Deploy image
         run: |
-          podman load < wkdev-sdk-intel.tar
+          podman load < webkit-container-sdk/wkdev-sdk-a64.tar
+          podman load < webkit-container-sdk/wkdev-sdk-intel.tar
           echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io --username=${GITHUB_REPOSITORY_OWNER} --password-stdin
           podman manifest create $REPO:$WKDEV_SDK_TAG
-          for IMGTAG in arm64 intel; do \
-              podman manifest add $REPO:$WKDEV_SDK_TAG docker://$REPO:IMGTAG; \
+          for IMGTAG in arm64 intel; do
+              podman manifest add $REPO:$WKDEV_SDK_TAG docker://$REPO:IMGTAG;
           done
           podman manifest push --all $REPO:$WKDEV_SDK_TAG
           
