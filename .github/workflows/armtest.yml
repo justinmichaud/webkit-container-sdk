@@ -110,15 +110,11 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Download image (intel)
+      - name: Download images
         uses: actions/download-artifact@v4
         with:
-          name: wkdev-sdk-intel.tar
-  
-      - name: Download image (arm64)
-        uses: actions/download-artifact@v4
-        with:
-          name: wkdev-sdk-a64.tar
+          pattern: wkdev-sdk-*.tar
+          merge-multiple: true
 
       - name: Deploy image
         run: |
