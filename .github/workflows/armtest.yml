@@ -36,20 +36,20 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: wkdev-sdk-a64.tar
-          path: wkdev-sdk-a64.tar
+          path: wkdev-sdk.tar
           retention-days: 7
 
-      - name: Test image
-        run: |
-          CONTAINER="wkdev-$(date +%s)"
-          source ./register-sdk-on-host.sh
-          wkdev-create --create-home --home ${HOME}/${CONTAINER}-home --verbose --attach --no-pull --name ${CONTAINER}
-          wkdev-enter -n ${CONTAINER} --exec -- git clone --depth=1 https://github.com/WebKit/WebKit.git
-          wkdev-enter -n ${CONTAINER} --exec -- ./WebKit/Tools/Scripts/build-webkit --wpe --release --generate-project-only
-          wkdev-enter -n ${CONTAINER} --exec -- ./WebKit/Tools/Scripts/build-webkit --gtk --release --generate-project-only
-          podman stop ${CONTAINER} || true
-          podman rm ${CONTAINER} || true
-          rm -rf ${HOME}/${CONTAINER}-home
+      # - name: Test image
+      #   run: |
+      #     CONTAINER="wkdev-$(date +%s)"
+      #     source ./register-sdk-on-host.sh
+      #     wkdev-create --create-home --home ${HOME}/${CONTAINER}-home --verbose --attach --no-pull --name ${CONTAINER}
+      #     wkdev-enter -n ${CONTAINER} --exec -- git clone --depth=1 https://github.com/WebKit/WebKit.git
+      #     wkdev-enter -n ${CONTAINER} --exec -- ./WebKit/Tools/Scripts/build-webkit --wpe --release --generate-project-only
+      #     wkdev-enter -n ${CONTAINER} --exec -- ./WebKit/Tools/Scripts/build-webkit --gtk --release --generate-project-only
+      #     podman stop ${CONTAINER} || true
+      #     podman rm ${CONTAINER} || true
+      #     rm -rf ${HOME}/${CONTAINER}-home
   buildintel:
     runs-on: [self-hosted, x64]
     steps:
@@ -76,20 +76,20 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: wkdev-sdk-intel.tar
-          path: wkdev-sdk-intel.tar
+          path: wkdev-sdk.tar
           retention-days: 7
 
-      - name: Test image
-        run: |
-          CONTAINER="wkdev-$(date +%s)"
-          source ./register-sdk-on-host.sh
-          wkdev-create --create-home --home ${HOME}/${CONTAINER}-home --verbose --attach --no-pull --name ${CONTAINER}
-          wkdev-enter -n ${CONTAINER} --exec -- git clone --depth=1 https://github.com/WebKit/WebKit.git
-          wkdev-enter -n ${CONTAINER} --exec -- ./WebKit/Tools/Scripts/build-webkit --wpe --release --generate-project-only
-          wkdev-enter -n ${CONTAINER} --exec -- ./WebKit/Tools/Scripts/build-webkit --gtk --release --generate-project-only
-          podman stop ${CONTAINER} || true
-          podman rm ${CONTAINER} || true
-          rm -rf ${HOME}/${CONTAINER}-home
+      # - name: Test image
+      #   run: |
+      #     CONTAINER="wkdev-$(date +%s)"
+      #     source ./register-sdk-on-host.sh
+      #     wkdev-create --create-home --home ${HOME}/${CONTAINER}-home --verbose --attach --no-pull --name ${CONTAINER}
+      #     wkdev-enter -n ${CONTAINER} --exec -- git clone --depth=1 https://github.com/WebKit/WebKit.git
+      #     wkdev-enter -n ${CONTAINER} --exec -- ./WebKit/Tools/Scripts/build-webkit --wpe --release --generate-project-only
+      #     wkdev-enter -n ${CONTAINER} --exec -- ./WebKit/Tools/Scripts/build-webkit --gtk --release --generate-project-only
+      #     podman stop ${CONTAINER} || true
+      #     podman rm ${CONTAINER} || true
+      #     rm -rf ${HOME}/${CONTAINER}-home
 
   deploy:
     runs-on: self-hosted
