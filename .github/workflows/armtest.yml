@@ -121,8 +121,8 @@ jobs:
 
       - name: Deploy image
         run: |
-          podman load < ./wkdev_sdk/wkdev-sdk-a64.tar
-          podman load < ./wkdev_sdk/wkdev-sdk-intel.tar
+          podman load < ./wkdev-sdk-a64.tar
+          podman load < ./wkdev-sdk-intel.tar
           echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io --username=${GITHUB_REPOSITORY_OWNER} --password-stdin
           podman manifest create $REPO:$WKDEV_SDK_TAG
           for IMGTAG in arm64 intel; do
