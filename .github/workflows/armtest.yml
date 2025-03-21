@@ -117,10 +117,11 @@ jobs:
         run: |
           podman load < ./wkdev-sdk-a64.tar
           podman load < ./wkdev-sdk-intel.tar
+          podman image list
           echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io --username=${GITHUB_REPOSITORY_OWNER} --password-stdin
           podman manifest create $REPO:$WKDEV_SDK_TAG
           for IMGTAG in arm64 intel; do
-              podman manifest add $REPO:$WKDEV_SDK_TAG docker://$REPO:$IMGTAG;
+              podman manifest add $REPO:$WKDEV_SDK_TAG containers-storage:$REPO:$IMGTAG;
           done
           podman manifest push --all $REPO:$WKDEV_SDK_TAG
           
