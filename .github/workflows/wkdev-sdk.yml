@@ -84,5 +84,5 @@ jobs:
           podman image list
           echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io --username=${GITHUB_REPOSITORY_OWNER} --password-stdin
           source ./register-sdk-on-host.sh
-          wkdev-sdk-bakery --mode=deploy --verbose --multiarch="${GITHUB_RUN_ID}_amd64"
+          wkdev-sdk-bakery --mode=deploy --verbose --multiarch
           podman image list
