@@ -1,0 +1,246 @@
+#!/usr/bin/env bash
+# Copyright 2026 Igalia S.L.
+# SPDX-License: MIT
+
+if [ -f "${WKDEV_SDK}/.wkdev-sdk-root" ]; then
+    source "${WKDEV_SDK}/utilities/application.sh"
+else
+    echo "Please set \${WKDEV_SDK} to point to the root of the wkdev-sdk checkout."
+    exit 1
+fi
+
+init_application "${0}" "Runs cross-built binaries, under user-mode emulation when needed." container-only
+
+argsparse_use_option =mode: "One of 'status', 'run', 'wrapper' or 'exec'" "mandatory"
+argsparse_use_option =arch: "Target architecture, inferred from the sysroot name when omitted" "default:"
+argsparse_use_option =build-directory: "WebKit build directory, added to the guest library path" "default:"
+argsparse_use_option =output: "Where to write the wrapper ('wrapper' mode)" "default:"
+argsparse_use_option force-qemu "Emulate even if this host can run the target architecture directly"
+argsparse_use_option trace "Enable 'xtrace' mode for this script"
+
+argsparse_usage_description="$(cat <<EOF
+<< Purpose >>
+
+    Runs binaries cross-built against a sysroot created by wkdev-cross-sysroot.
+    Set \${WKDEV_CROSS_SYSROOT} first.
+
+    Modes, cheapest first:
+
+      status   Report the sysroot, whether qemu is present, and whether this host
+               can execute the target architecture without emulation.
+
+      run      Run one target binary. Uses the sysroot's dynamic loader when the
+               host can execute the architecture, qemu otherwise. No kernel state.
+
+      wrapper  Write a script that runs whatever it is handed under emulation, for
+               run-jsc-stress-tests --artifact-exec-wrapper. The runner still sees
+               the real binary, so its architecture detection keeps working.
+
+      exec     Run a command with a qemu handler registered in a *private*
+               binfmt_misc instance, inside a throwaway user and mount namespace.
+               Needed when the program execs target binaries itself, as WebKit's
+               multi-process architecture and WebKitTestRunner do. The host's
+               binfmt_misc registry is never written and the registration is gone
+               when the command exits.
+
+    Emulation needs the 'qemu-user' package, which ships the emulators and the
+    binfmt magic and registers nothing by itself. Do not install
+    'qemu-user-binfmt': its purpose is the system-wide registration this avoids.
+
+    See docs/04-Cross-compilation-inside-the-SDK.md.
+
+<< Examples >>
+
+    \$ ${application_name} --mode=status --arch=riscv64
+    \$ ${application_name} --mode=run --build-directory=WebKitBuild-rv64/JSCOnly/Release -- \\
+          WebKitBuild-rv64/JSCOnly/Release/bin/jsc -e 'print(1+1)'
+    \$ ${application_name} --mode=wrapper --arch=riscv64 --output=/tmp/qemu-wrap
+    \$ ${application_name} --mode=exec -- Tools/Scripts/run-webkit-tests --wpe --release
+EOF
+)"
+
+process_command_line_arguments() {
+
+    # Everything after '--' is the command to run.
+    argsparse_allow_no_argument yes
+    argsparse_parse_options "${@}"
+    argsparse_is_option_set "trace" && set -o xtrace
+}
+
+setup_target() {
+
+    # Infer the architecture from a sysroot named ubuntu-<release>-<arch>.
+    if [ -z "${target_arch}" ]; then
+        case "$(basename "${sysroot}")" in
+        *-armhf)   target_arch="armhf" ;;
+        *-arm64)   target_arch="arm64" ;;
+        *-riscv64) target_arch="riscv64" ;;
+        *-ppc64el) target_arch="ppc64el" ;;
+        *) _abort_ "Cannot infer the target architecture from '${sysroot}', pass --arch." ;;
+        esac
+    fi
+
+    case "${target_arch}" in
+    armhf)   target_triple="arm-linux-gnueabihf"   ; qemu_arch="arm"     ; loader_name="ld-linux-armhf.so.3" ;;
+    arm64)   target_triple="aarch64-linux-gnu"     ; qemu_arch="aarch64" ; loader_name="ld-linux-aarch64.so.1" ;;
+    riscv64) target_triple="riscv64-linux-gnu"     ; qemu_arch="riscv64" ; loader_name="ld-linux-riscv64-lp64d.so.1" ;;
+    ppc64el) target_triple="powerpc64le-linux-gnu" ; qemu_arch="ppc64le" ; loader_name="ld64.so.2" ;;
+    *) _abort_ "Unsupported --arch=${target_arch}" ;;
+    esac
+
+    qemu_binary="qemu-${qemu_arch}"
+    handler_name="qemu-${qemu_arch}"
+    loader="${sysroot}/lib/${target_triple}/${loader_name}"
+}
+
+guest_library_path() {
+
+    local path="${sysroot}/usr/lib/${target_triple}:${sysroot}/lib/${target_triple}:${sysroot}/usr/lib"
+    [ -n "${build_directory}" ] && path="$(cd "${build_directory}" && pwd)/lib:${path}"
+    echo "${path}"
+}
+
+# Decide by trying it rather than guessing from uname: an aarch64 host that
+# implements AArch32 at EL0 runs armhf directly, and emulating it would only be
+# slower. The sysroot's loader is a self-contained target binary.
+host_runs_target_natively() {
+
+    [ -x "${loader}" ] && "${loader}" --version >/dev/null 2>&1
+}
+
+do_status() {
+
+    _log_ "Target architecture:  ${target_arch} (${target_triple})"
+    _log_ "Sysroot:              ${sysroot} ($([ -d "${sysroot}" ] && echo present || echo MISSING))"
+    if command -v "${qemu_binary}" >/dev/null; then
+        _log_ "Emulator:             $("${qemu_binary}" --version | head -1)"
+    else
+        _log_ "Emulator:             ${qemu_binary} not found, install the 'qemu-user' package"
+    fi
+    if host_runs_target_natively; then
+        _log_ "Native execution:     yes, this host runs ${target_arch} directly"
+    else
+        _log_ "Native execution:     no, ${target_arch} needs emulation here"
+    fi
+    _log_ "Host binfmt_misc:     $(ls /proc/sys/fs/binfmt_misc/ 2>/dev/null | grep -v '^\(register\|status\)$' | tr '\n' ' ')"
+}
+
+do_wrapper() {
+
+    [ -n "${wrapper_output}" ] || _abort_ "'wrapper' mode requires --output."
+    command -v "${qemu_binary}" >/dev/null || _abort_ "${qemu_binary} not found, install the 'qemu-user' package."
+
+    cat > "${wrapper_output}" <<EOF
+#!/bin/sh
+# Generated by wkdev-cross-emulate: runs whatever it is given under ${target_arch} emulation.
+exec $(command -v "${qemu_binary}") -L "${sysroot}" -E LD_LIBRARY_PATH="$(guest_library_path)" "\$@"
+EOF
+    chmod +x "${wrapper_output}"
+
+    _log_ "-> Wrote '${wrapper_output}'. Use it with the real binary, so the runner can read its ELF header:"
+    _log_ ""
+    _log_ "    Tools/Scripts/run-jsc-stress-tests --jsc <build>/bin/jsc \\"
+    _log_ "        --arch ${target_arch/armhf/arm} --artifact-exec-wrapper ${wrapper_output} JSTests/stress"
+    _log_ ""
+    _log_ "   Pass --arch, not --force-architecture: the latter makes the runner prepend"
+    _log_ "   /usr/bin/arch, which only exists on macOS."
+}
+
+do_run() {
+
+    if ! argsparse_is_option_set "force-qemu" && host_runs_target_natively; then
+        exec "${loader}" --library-path "$(guest_library_path)" "${command[@]}"
+    fi
+    command -v "${qemu_binary}" >/dev/null || _abort_ "${qemu_binary} not found, install the 'qemu-user' package."
+    exec "${qemu_binary}" -L "${sysroot}" -E LD_LIBRARY_PATH="$(guest_library_path)" "${command[@]}"
+}
+
+do_exec() {
+
+    if ! argsparse_is_option_set "force-qemu" && host_runs_target_natively; then
+        # binfmt_misc cannot help for an architecture the host executes natively:
+        # a script interpreter is rejected outright, and a helper that re-execs
+        # the target through the sysroot's loader recurses until execv fails with
+        # E2BIG, because the loader is itself an ELF matching the same handler.
+        # For that case the fix belongs at link time.
+        _log_ "-> This host runs ${target_arch} natively, running the command without interception."
+        _log_ "   Should a target binary fail to start, its baked-in interpreter path is resolving"
+        _log_ "   against the host. Either build for local testing with:"
+        _log_ ""
+        _log_ "       -DCMAKE_EXE_LINKER_FLAGS=\"-Wl,--dynamic-linker=${loader} -Wl,--disable-new-dtags -Wl,-rpath,$(guest_library_path)\""
+        _log_ ""
+        _log_ "   (--disable-new-dtags is required: DT_RUNPATH is not inherited by dependencies,"
+        _log_ "   so transitive libraries are not found), or re-run with --force-qemu."
+        exec "${command[@]}"
+    fi
+
+    command -v "${qemu_binary}" >/dev/null || _abort_ "${qemu_binary} not found, install the 'qemu-user' package."
+
+    local conf_file="/usr/share/qemu/binfmt.d/${handler_name}.conf"
+    [ -r "${conf_file}" ] || _abort_ "Missing '${conf_file}', it ships with the 'qemu-user' package."
+
+    # Never hand-roll the magic and mask. A wrong mask matches native ELF too, and
+    # then every binary in scope fails with "Exec format error".
+    local register_line
+    register_line="$(grep -v '^[[:space:]]*#' "${conf_file}" | grep -m1 '^:')"
+    [ -n "${register_line}" ] || _abort_ "No registration line found in '${conf_file}'."
+
+    if [ "${WKDEV_EMULATE_INNER:-0}" != "1" ]; then
+        # --map-root-user is required: after execve a non-root euid loses the
+        # capabilities needed to mount, even in a namespace we created ourselves.
+        _log_ "-> Registering ${handler_name} in a private binfmt_misc instance, the host's is untouched."
+        exec unshare --user --map-root-user --mount --propagation private \
+            env WKDEV_EMULATE_INNER=1 "${0}" --mode=exec "--arch=${target_arch}" \
+                ${build_directory:+--build-directory="${build_directory}"} --force-qemu -- "${command[@]}"
+    fi
+
+    mount -t binfmt_misc none /proc/sys/fs/binfmt_misc 2>/dev/null || _abort_ \
+"Could not mount a private binfmt_misc instance, which needs a kernel with
+  namespaced binfmt_misc (Linux 6.7 or newer). Use '--mode=wrapper' instead."
+
+    if ls /proc/sys/fs/binfmt_misc/ | grep -qv '^\(register\|status\)$'; then
+        _abort_ "Refusing to continue: the binfmt_misc instance is not private."
+    fi
+
+    echo "${register_line}" > /proc/sys/fs/binfmt_misc/register || _abort_ "The kernel rejected the registration."
+
+    # A wrong registration breaks native execution silently, until something execs.
+    if ! /bin/true; then
+        echo "-1" > "/proc/sys/fs/binfmt_misc/${handler_name}" 2>/dev/null
+        _abort_ "Registering ${handler_name} broke native execution, rolled back."
+    fi
+
+    # QEMU_LD_PREFIX is how the emulator finds the guest loader and libraries when
+    # the kernel invokes it through binfmt, where there is nowhere to pass -L. It
+    # is inherited by every descendant, which is the point.
+    export QEMU_LD_PREFIX="${sysroot}"
+    exec "${command[@]}"
+}
+
+run() {
+
+    process_command_line_arguments "${@}"
+
+    sysroot="${WKDEV_CROSS_SYSROOT:-}"
+    [ -n "${sysroot}" ] || _abort_ "Set \${WKDEV_CROSS_SYSROOT} to a sysroot created by wkdev-cross-sysroot."
+
+    target_arch="${program_options["arch"]}"
+    build_directory="${program_options["build-directory"]}"
+    wrapper_output="${program_options["output"]}"
+    command=("${program_params[@]}")
+
+    setup_target
+
+    case "${program_options["mode"]}" in
+    status)  do_status ;;
+    wrapper) do_wrapper ;;
+    run|exec)
+        [ -d "${sysroot}" ] || _abort_ "No sysroot at '${sysroot}', run wkdev-cross-sysroot first."
+        [ ${#command[@]} -gt 0 ] || _abort_ "'${program_options["mode"]}' mode needs a command, after '--'."
+        [ "${program_options["mode"]}" = "run" ] && do_run || do_exec
+        ;;
+    *) _abort_ "Unknown --mode='${program_options["mode"]}', expected status, run, wrapper or exec." ;;
+    esac
+}
+
+run "${@}"

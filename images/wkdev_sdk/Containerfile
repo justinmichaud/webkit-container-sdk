@@ -116,13 +116,16 @@ RUN git clone https://gitlab.gnome.org/GNOME/jhbuild.git --revision=${JHBUILD_CO
     make install && \
     rm -r jhbuild
 
-# Register JHBuild environment
-ENV C_INCLUDE_PATH "/jhbuild/install/include"
+# Register JHBuild environment.
+#
+# Deliberately no C_INCLUDE_PATH / CPLUS_INCLUDE_PATH / LDFLAGS here. Those are
+# global to every compiler invocation, including cross ones: a compiler honours
+# them whatever --target and --sysroot say, and puts them ahead of the sysroot,
+# so a cross build picks up these native headers and libraries. Everything below
+# is discoverable through pkg-config and CMAKE_PREFIX_PATH instead.
 ENV CMAKE_PREFIX_PATH "/jhbuild/install"
-ENV CPLUS_INCLUDE_PATH "/jhbuild/install/include"
 ENV GI_TYPELIB_PATH "/jhbuild/install/lib/girepository-1.0"
 ENV GST_PLUGIN_PATH_1_0 "/jhbuild/install/lib/gstreamer-1.0"
-ENV LDFLAGS "-L/jhbuild/install/lib"
 ENV LD_LIBRARY_PATH "/jhbuild/install/lib"
 ENV PATH "/jhbuild/install/bin:$PATH"
 ENV PKG_CONFIG_PATH "/jhbuild/install/lib/pkgconfig:/jhbuild/install/share/pkgconfig:/usr/local/lib/pkgconfig:/usr/local/share/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig"
@@ -171,7 +174,7 @@ RUN /tmp/create-clang-symlinks 18 && rm /tmp/create-clang-symlinks
 # Note: the swiftlang package in Ubuntu 26.04 is not recent enough, so we use the
 # upstream 24.04 binaries which run fine on 26.04.
 ARG SWIFT_VERSION=6.3.2
-ENV PATH="/opt/swift/usr/bin:${PATH}"
+ENV PATH="${PATH}:/opt/swift/usr/bin"
 
 RUN case "$(uname -m)" in \
         x86_64)  SWIFT_ARCH_SUFFIX="" ;; \

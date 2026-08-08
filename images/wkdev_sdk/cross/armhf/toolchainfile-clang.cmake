@@ -1,6 +1,10 @@
 set(CMAKE_SYSTEM_NAME Linux)
 set(CMAKE_SYSTEM_PROCESSOR arm)
 
+# CMake folds $ENV{LDFLAGS} into CMAKE_<kind>_LINKER_FLAGS_INIT when a language
+# is enabled, which for a cross build means native -L paths on every link line.
+unset(ENV{LDFLAGS})
+
 set(CMAKE_C_COMPILER clang)
 set(CMAKE_CXX_COMPILER clang++)
 set(CMAKE_C_COMPILER_TARGET arm-linux-gnueabihf)

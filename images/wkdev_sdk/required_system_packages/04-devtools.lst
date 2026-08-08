@@ -19,6 +19,10 @@ python-gi-dev python3-gi
 # For WebKit scripts such as cross-toolchain-helper
 chrpath cpio diffstat lz4 zstd
 
+# Running cross-built binaries under user-mode emulation, see wkdev-cross-emulate.
+# Deliberately not qemu-user-binfmt
+qemu-user
+
 # For podman-host
 podman
 
