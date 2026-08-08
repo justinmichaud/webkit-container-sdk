@@ -157,7 +157,13 @@ RUN --mount=type=cache,target=/var/tmp/jhbuild/downloads \
 # LLVM toolchain. This must happen after swiftlang has bootstrapped that toolchain.
 COPY /rootfs/etc/apt/preferences.d/blacklist-llvm-toolchains /etc/apt/preferences.d/blacklist-llvm-toolchains
 
-# Register JHBuild environment
+# Register JHBuild environment.
+#
+# Deliberately no C_INCLUDE_PATH / CPLUS_INCLUDE_PATH / LDFLAGS: a compiler
+# honours those on every invocation, whatever --target and --sysroot say, and
+# ahead of the sysroot, so they silently pull these native headers and libraries
+# into cross builds. pkg-config and CMAKE_PREFIX_PATH serve the same purpose, and
+# jhbuild sets what it needs itself while building its own modules.
 ENV CMAKE_PREFIX_PATH "/jhbuild/install"
 ENV GI_TYPELIB_PATH "/jhbuild/install/lib/girepository-1.0"
 ENV GST_PLUGIN_PATH_1_0 "/jhbuild/install/lib/gstreamer-1.0"

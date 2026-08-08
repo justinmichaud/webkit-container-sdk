@@ -1,0 +1,31 @@
+# A cross-compilation sysroot for one Ubuntu release and one architecture.
+#
+#   wkdev-sdk-bakery --mode=build --name=wkdev-sysroot --arch=riscv64
+#
+# The architecture is podman's --arch. The Ubuntu release is the FROM tag: build
+# from the oldest release the binaries have to run on, as glibc is backwards but
+# not forwards compatible. To pick another one, invoke podman directly:
+#
+#   podman build --arch=riscv64 --build-arg UBUNTU_RELEASE=24.04 -t wkdev-sysroot .
+#
+# There is deliberately no package list here. The dependencies are whatever
+# WebKit's own install-dependencies scripts say they are, installed natively for
+# the target architecture, so there is nothing to keep in sync. The WebKit commit
+# is pinned, as in images/wkdev_sdk/Containerfile, to keep sysroots reproducible.
+ARG UBUNTU_RELEASE=24.04
+FROM public.ecr.aws/ubuntu/ubuntu:${UBUNTU_RELEASE}
+
+ARG WEBKIT_COMMIT=e6ef72584f2d1153f9d9e51af2f87f5ffc2a8712
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends git ca-certificates && \
+    git init WebKit && cd WebKit && \
+    git remote add origin https://github.com/WebKit/WebKit.git && \
+    git sparse-checkout init && git sparse-checkout set Tools && \
+    git fetch --filter=blob:none --depth=1 origin ${WEBKIT_COMMIT} && \
+    git checkout FETCH_HEAD && \
+    yes | ./Tools/wpe/install-dependencies && \
+    yes | ./Tools/gtk/install-dependencies && \
+    cd .. && rm -rf WebKit && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*

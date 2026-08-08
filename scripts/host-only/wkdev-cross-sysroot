@@ -1,0 +1,268 @@
+#!/usr/bin/env bash
+# Copyright 2026 Igalia S.L.
+# SPDX-License: MIT
+
+if [ -f "${WKDEV_SDK}/.wkdev-sdk-root" ]; then
+    source "${WKDEV_SDK}/utilities/application.sh"
+else
+    echo "Please set \${WKDEV_SDK} to point to the root of the wkdev-sdk checkout."
+    exit 1
+fi
+source "${WKDEV_SDK}/utilities/prerequisites.sh"
+
+init_application "${0}" "Unpacks a wkdev-sysroot image and writes a CMake toolchain file." host-only
+
+verify_executables_exist podman
+
+argsparse_allow_no_argument yes
+argsparse_use_option =arch: "Target architecture: armhf (or arm), arm64, riscv64 or ppc64el" "default:armhf"
+argsparse_use_option =release: "Ubuntu release the sysroot image was built from" "default:noble"
+argsparse_use_option =image: "Sysroot image to unpack, instead of a local wkdev-sysroot image" "default:"
+argsparse_use_option =directory: "Directory holding unpacked sysroots" "default:${HOME}/.cache/wkdev-cross"
+argsparse_use_option force "Unpack again even if the sysroot is already present"
+argsparse_use_option trace "Enable 'xtrace' mode for this script"
+
+argsparse_usage_description="$(cat <<EOF
+<< Purpose >>
+
+    Turns a 'wkdev-sysroot' container image into a sysroot on disk, plus a CMake
+    toolchain file, for cross-building WebKit against a given Ubuntu release and
+    architecture. Build the image first, for the same architecture:
+
+        \$ wkdev-sdk-bakery --mode=build --name=wkdev-sysroot --arch=riscv64
+
+    Target the oldest device you need to run on: glibc is backwards but not
+    forwards compatible.
+
+    See docs/04-Cross-compilation-inside-the-SDK.md.
+
+<< Examples >>
+
+    \$ ${application_name} --arch=riscv64
+    \$ ${application_name} --arch=armhf --release=noble --force
+EOF
+)"
+
+process_command_line_arguments() {
+
+    argsparse_parse_options "${@}"
+    argsparse_is_option_set "trace" && set -o xtrace
+}
+
+# Per-architecture facts. Adding an architecture is one row.
+setup_target() {
+
+    [ "${target_arch}" = "arm" ] && target_arch="armhf" # podman's name for armv7
+
+    case "${target_arch}" in
+    armhf)
+        target_triple="arm-linux-gnueabihf"
+        cmake_processor="arm"
+        podman_arch="arm"
+        isa_flags="-march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard -mthumb"
+        ;;
+    arm64)
+        target_triple="aarch64-linux-gnu"
+        cmake_processor="aarch64"
+        podman_arch="arm64"
+        isa_flags=""
+        ;;
+    riscv64)
+        target_triple="riscv64-linux-gnu"
+        cmake_processor="riscv64"
+        podman_arch="riscv64"
+        isa_flags="-march=rv64gc -mabi=lp64d"
+        ;;
+    ppc64el)
+        target_triple="powerpc64le-linux-gnu"
+        cmake_processor="ppc64le"
+        podman_arch="ppc64le"
+        isa_flags=""
+        ;;
+    *)
+        _abort_ "Unsupported --arch=${target_arch}"
+        ;;
+    esac
+}
+
+# The bakery tags images as <registry>/<user>/wkdev-sysroot:<version>_<arch>, so
+# accept any local wkdev-sysroot image built for the target architecture rather
+# than requiring the caller to copy a tag around.
+resolve_sysroot_image() {
+
+    if [ -z "${sysroot_image}" ]; then
+        sysroot_image="$(podman images --format '{{.Repository}}:{{.Tag}}' | grep -m1 -E "(^|/)wkdev-sysroot:.*_${podman_arch}$")" ||
+            sysroot_image="$(get_qualified_name wkdev-sysroot):$(get_default_container_tag)_${podman_arch}"
+    fi
+
+    if ! podman image exists "${sysroot_image}"; then
+        _log_ "-> Pulling '${sysroot_image}'..."
+        podman pull --arch="${podman_arch}" "${sysroot_image}" || _abort_ \
+"Could not obtain a sysroot image for ${target_arch}. Build one locally with:
+    wkdev-sdk-bakery --mode=build --name=wkdev-sysroot --arch=${podman_arch}
+or pass --image=<reference>."
+    fi
+
+    local image_arch
+    image_arch="$(podman image inspect "${sysroot_image}" --format '{{.Architecture}}')"
+    [ "${image_arch}" = "${podman_arch}" ] || _abort_ "'${sysroot_image}' is a ${image_arch} image, expected ${podman_arch}."
+}
+
+unpack_sysroot() {
+
+    local container_id
+
+    _log_ "-> Unpacking '${sysroot_image}' into '${sysroot}'..."
+    rm -rf "${sysroot}" && mkdir -p "${sysroot}"
+    container_id="$(podman create --arch="${podman_arch}" "${sysroot_image}" /bin/true)"
+    podman export "${container_id}" | tar -C "${sysroot}" -xf - 2>/dev/null
+    run_command_silent podman rm "${container_id}"
+
+    # An absolute symlink in a sysroot resolves against the *host* root, which
+    # silently links host libraries into a target binary. Rewrite each one to go
+    # up to the sysroot and back down, so it also survives the sysroot being
+    # visible at another path inside the container. Links into the runtime
+    # filesystem are meant to resolve on the device, so leave those alone.
+    local link target rest up fixed=0
+    while read -r link; do
+        target="$(readlink "${link}")"
+        [ "${target:0:1}" = "/" ] || continue
+        case "${target}" in /dev/*|/proc/*|/sys/*|/run/*|/tmp/*|/var/run/*) continue ;; esac
+        rest="${link#${sysroot}/}" up=""
+        while [ "${rest}" != "${rest#*/}" ]; do rest="${rest#*/}"; up+="../"; done
+        ln -sfn "${up}${target#/}" "${link}"
+        fixed=$(( fixed + 1 ))
+    done < <(find "${sysroot}" -type l)
+
+    local codename
+    codename="$(sed -n 's/^VERSION_CODENAME=//p' "${sysroot}/etc/os-release")"
+    [ "${codename}" = "${target_release}" ] || _abort_ \
+        "'${sysroot_image}' is Ubuntu ${codename}, not ${target_release}. Pass --release=${codename}."
+
+    podman image inspect "${sysroot_image}" --format '{{.Digest}}' > "${sysroot}/.wkdev-sysroot-digest"
+    _log_ "-> Relativised ${fixed} absolute symlinks, sysroot is $(du -sh "${sysroot}" | cut -f1)."
+}
+
+# Both wrappers exist because the environment beats the toolchain file. CPATH,
+# C_INCLUDE_PATH, CPLUS_INCLUDE_PATH, OBJC_INCLUDE_PATH and LIBRARY_PATH apply to
+# every compiler invocation whatever --target and --sysroot say, and land *ahead*
+# of the sysroot; CMake's FindPkgConfig runs pkg-config with the jhbuild
+# PKG_CONFIG_PATH in scope, and host .pc files win. They reach the tools at build
+# time, from whatever environment ninja was started in, so only the process
+# environment can neutralise them.
+#
+# The compilers are named 'cc' and 'c++' on purpose: ccache and sccache work out
+# which compiler they are wrapping from the name they are invoked with.
+write_wrappers() {
+
+    mkdir -p "${sysroot}/.cross"
+
+    local wrapper
+    for wrapper in "cc:clang" "c++:clang++"; do
+        cat > "${sysroot}/.cross/${wrapper%%:*}" <<EOF
+#!/bin/sh
+# Generated by wkdev-cross-sysroot.
+exec env -u CPATH -u C_INCLUDE_PATH -u CPLUS_INCLUDE_PATH -u OBJC_INCLUDE_PATH \\
+         -u LIBRARY_PATH ${wrapper##*:} "\$@"
+EOF
+        chmod +x "${sysroot}/.cross/${wrapper%%:*}"
+    done
+
+    cat > "${sysroot}/.cross/pkg-config" <<EOF
+#!/bin/sh
+# Generated by wkdev-cross-sysroot.
+: "\${WKDEV_CROSS_SYSROOT:?must point at the sysroot directory}"
+PKG_CONFIG_SYSROOT_DIR="\${WKDEV_CROSS_SYSROOT}"
+PKG_CONFIG_LIBDIR="\${WKDEV_CROSS_SYSROOT}/usr/lib/${target_triple}/pkgconfig:\${WKDEV_CROSS_SYSROOT}/usr/lib/pkgconfig:\${WKDEV_CROSS_SYSROOT}/usr/share/pkgconfig"
+export PKG_CONFIG_SYSROOT_DIR PKG_CONFIG_LIBDIR
+unset PKG_CONFIG_PATH
+exec /usr/bin/pkg-config "\$@"
+EOF
+    chmod +x "${sysroot}/.cross/pkg-config"
+}
+
+write_toolchain_file() {
+
+    cat > "${sysroot}/toolchain.cmake" <<EOF
+# Generated by wkdev-cross-sysroot. Target: Ubuntu ${target_release} ${target_arch} (${target_triple}).
+#
+# The sysroot is located through the environment, so that one sysroot serves both
+# the host and the container, where it is visible at a different path.
+if (NOT DEFINED ENV{WKDEV_CROSS_SYSROOT})
+    message(FATAL_ERROR "Set WKDEV_CROSS_SYSROOT to the sysroot directory containing this file.")
+endif ()
+set(_sysroot "\$ENV{WKDEV_CROSS_SYSROOT}")
+
+# CMake folds \$ENV{LDFLAGS} into CMAKE_<kind>_LINKER_FLAGS_INIT when a language
+# is enabled, which for a cross build means native -L paths on every link line.
+unset(ENV{LDFLAGS})
+
+set(CMAKE_SYSTEM_NAME Linux)
+set(CMAKE_SYSTEM_PROCESSOR ${cmake_processor})
+set(CMAKE_SYSROOT "\${_sysroot}")
+set(CMAKE_LIBRARY_ARCHITECTURE ${target_triple})
+
+# One clang serves every architecture; only --target and --sysroot change. It is
+# reached through the generated wrappers, which strip the environment variables
+# that would otherwise put host directories ahead of the sysroot. --gcc-toolchain
+# picks the C++ headers belonging to the sysroot's own libstdc++ runtime, rather
+# than those of a newer host cross-gcc.
+set(CMAKE_C_COMPILER "\${_sysroot}/.cross/cc")
+set(CMAKE_CXX_COMPILER "\${_sysroot}/.cross/c++")
+set(CMAKE_C_COMPILER_TARGET ${target_triple})
+set(CMAKE_CXX_COMPILER_TARGET ${target_triple})
+set(CMAKE_C_FLAGS_INIT "${isa_flags}")
+set(CMAKE_CXX_FLAGS_INIT "${isa_flags} --gcc-toolchain=\${_sysroot}/usr")
+
+set(CMAKE_LINKER_TYPE LLD)
+
+# Libraries and headers from the sysroot only. Programs from the host only: the
+# sysroot's /usr/bin holds target binaries, while build-time code generators
+# (glib-compile-resources, gdbus-codegen, ...) have to run on the host.
+set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
+set(PKG_CONFIG_EXECUTABLE "\${_sysroot}/.cross/pkg-config" CACHE FILEPATH "" FORCE)
+EOF
+}
+
+run() {
+
+    process_command_line_arguments "${@}"
+
+    target_arch="${program_options["arch"]}"
+    target_release="${program_options["release"]}"
+    sysroot_image="${program_options["image"]}"
+
+    setup_target
+
+    sysroot="${program_options["directory"]}/ubuntu-${target_release}-${target_arch}"
+
+    if [ ! -f "${sysroot}/.wkdev-sysroot-digest" ] || argsparse_is_option_set "force"; then
+        resolve_sysroot_image
+        unpack_sysroot
+    else
+        _log_ "-> Sysroot '${sysroot}' is already present, pass --force to unpack it again."
+    fi
+
+    write_wrappers
+    write_toolchain_file
+
+    _log_ ""
+    _log_ "Ready. On the host:"
+    _log_ "    export WKDEV_CROSS_SYSROOT=\"${sysroot}\""
+    if [ "${sysroot#${HOME}/}" != "${sysroot}" ]; then
+        _log_ "Inside the container, where your home is mounted at \${HOST_HOME}:"
+        _log_ "    export WKDEV_CROSS_SYSROOT=\"\${HOST_HOME}/${sysroot#${HOME}/}\""
+    else
+        _log_ "This sysroot is outside your home directory, so it is not visible inside the"
+        _log_ "container by default. Either use the default --directory, or point"
+        _log_ "\${WKDEV_CROSS_SYSROOT} at wherever you have made it visible in there."
+    fi
+    _log_ ""
+    _log_ "Then configure WebKit with:"
+    _log_ "    -DCMAKE_TOOLCHAIN_FILE=\"\${WKDEV_CROSS_SYSROOT}/toolchain.cmake\""
+}
+
+run "${@}"
