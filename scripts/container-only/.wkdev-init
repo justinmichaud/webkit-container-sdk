@@ -13,8 +13,8 @@ source "${WKDEV_SDK}/utilities/podman.sh"
 argsparse_use_option trace        "Enable 'xtrace' mode for this script"
 
 argsparse_use_option =shell:      "Specific shell to use for interactive container usage" mandatory
-argsparse_use_option =user:       "Container account user name" type:username mandatory
-argsparse_use_option =group:      "Container account group name" type:group mandatory
+argsparse_use_option =user:       "Container account user name" mandatory
+argsparse_use_option =group:      "Container account group name" mandatory
 argsparse_use_option =packages:   "Additional packages to install"
 argsparse_use_option exit-when-done "Instead of sleeping exit (stopping the container) when done"
 
