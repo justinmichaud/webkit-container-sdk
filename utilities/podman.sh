@@ -4,7 +4,10 @@
 source "${WKDEV_SDK}/utilities/prerequisites.sh"
 
 podman_executable="/usr/bin/podman"
-if is_running_in_wkdev_sdk_container; then
+# wk: the file itself, which is what the comment below has always said this
+# depends on -- not "is this a container the SDK may initialise". See
+# sdk-patches/apply.sh 14.
+if [ -f "/usr/bin/podman-host" ]; then
     # Requires the presence of /usr/bin/podman-host in the container image.
     # It acts as portal to access the host podman instance.
     podman_executable="/usr/bin/podman-host"
@@ -12,9 +15,14 @@ fi
 
 # systemctl to check the presence of a 'podman.socket' user service
 # podman, to control, well, podman. :-)
-verify_executables_exist systemctl
+# wk: a container with no podman-host has no podman to reach, and nothing in
+# this file needs one there. On the host, and in a real SDK container, both
+# checks run exactly as before.
+if ! is_running_in_container || [ -f "/usr/bin/podman-host" ]; then
+    verify_executables_exist systemctl
 
-verify_podman_is_acceptable "${podman_executable}"
+    verify_podman_is_acceptable "${podman_executable}"
+fi
 
 # Uses host podman no matter if executed within container or on host.
 run_podman() { run_command "${podman_executable}" "${@}"; }
