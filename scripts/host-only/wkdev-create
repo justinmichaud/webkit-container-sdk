@@ -453,8 +453,10 @@ build_podman_create_arguments() {
     # Share IPC namepace with host -- otherwise /dev/shm access (e.g. in glxgears) won't work.
     arguments+=("--ipc" "host")
 
-    # Share network namepace with host.
-    arguments+=("--network" "host")
+    # Network namespace. Defaults to host for upstream compatibility, but a
+    # named network is what allows egress filtering: traffic has to cross a
+    # bridge before nftables can see it.
+    arguments+=("--network" "${program_options["network"]:-host}")
 
     # Map /etc/{hosts|localtime|resolv.conf|machine-id} into container.
     # Note that /etc/hosts is copied into the container in wkdev-init.
