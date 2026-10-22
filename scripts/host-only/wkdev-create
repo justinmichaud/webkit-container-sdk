@@ -496,7 +496,9 @@ build_podman_create_arguments() {
     fi
 
     # Always set XDG_RUNTIME_DIR to the same value.
-    arguments+=("--env" "XDG_RUNTIME_DIR=/run/user/${host_user_id}")
+    # wk: the container user's uid, not the invoking user's -- see
+    # sdk-patches/apply.sh section 10.
+    arguments+=("--env" "XDG_RUNTIME_DIR=/run/user/${WKDEV_CONTAINER_UID:-${host_user_id}}")
 
     if argsparse_is_option_set "no-pull"; then
         arguments+=("--pull=never")
