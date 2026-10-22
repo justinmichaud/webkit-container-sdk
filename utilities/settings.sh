@@ -11,7 +11,9 @@ get_sdk_maintainer_email() { echo "webkit-gtk@lists.webkit.org"; }
 #####
 get_init_done_file() { echo "/run/.wkdev-init-done"; }
 is_running_in_container() { [ -f "/run/.containerenv" ]; }
-is_running_in_wkdev_sdk_container() { is_running_in_container && [ -f "/usr/bin/podman-host" ]; }
+# wk: /etc/wk-container marks a container wk built for a workspace whose
+# image is deliberately not the SDK -- see sdk-patches/apply.sh 13.
+is_running_in_wkdev_sdk_container() { is_running_in_container && { [ -f "/usr/bin/podman-host" ] || [ -f "/etc/wk-container" ]; }; }
 
 #####
 ##### Container registry
