@@ -31,6 +31,7 @@ argsparse_use_option =arch:       "Container architecture."
 argsparse_use_option additional-flags: "Additional flags to pass directly to podman create"
 argsparse_use_option network: "Container network (default: host)" default:host
 argsparse_use_option unsafe-caps "Add SYS_ADMIN/NET_RAW, host podman socket, and disable seccomp (unsafe in a sandbox)"
+argsparse_use_option isolated "Do not share the host session with the container (no D-Bus, keyring, dconf, journal, X11, PulseAudio, host home or runtime dir)"
 
 argsparse_usage_description="$(cat <<EOF
 << Purpose >>
@@ -224,13 +225,18 @@ try_process_home_directory() {
     local podman_argument=("--env" "HOST_HOME=/host/home/${container_user_name}")
     podman_argument+=("--label" "wkdev.home-path=${container_user_home}")
     podman_argument+=("--mount" "type=bind,source=${container_user_home},destination=/home/${container_user_name},rslave")
+    # wk: the host home directory is not the workspace's business.
+    argsparse_is_option_set "isolated" || \
     podman_argument+=("--mount" "type=bind,source=${HOME},destination=/host/home/${container_user_name},rslave")
     if [ -n "${container_shared_folder-}" ]; then
         podman_argument+=("--label" "wkdev.shared-dir-path=${container_shared_folder}")
     fi
 
     # systemctl --user is-enabled <some-service> relies on the accessibility of ~/.config/systemd/user, map it into the container if available.
-    [ -d "${HOME}/.config/systemd/user" ] && podman_argument+=("--mount" "type=bind,source=${HOME}/.config/systemd/user,destination=/home/${container_user_name}/.config/systemd/user,rslave")
+    # wk: isolated-systemd-user -- writing host unit files is a host escape.
+    if ! argsparse_is_option_set "isolated"; then
+        [ -d "${HOME}/.config/systemd/user" ] && podman_argument+=("--mount" "type=bind,source=${HOME}/.config/systemd/user,destination=/home/${container_user_name}/.config/systemd/user,rslave")
+    fi
 
     try_process ${1} "Expose both host & container home directory" 1 ${podman_argument[@]}
 }
@@ -481,6 +487,8 @@ build_podman_create_arguments() {
     arguments+=("--tmpfs" "/tmp")
 
     # Mount the host runtime directory, used during wkdev-sync-runtime-state
+    # wk: sharing the whole runtime directory shares the session bus with it.
+    argsparse_is_option_set "isolated" || \
     arguments+=("--mount" "type=bind,source=${XDG_RUNTIME_DIR},destination=/host/run,bind-propagation=rslave")
 
     # Disable SELinux isolation.
@@ -532,23 +540,23 @@ build_podman_create_arguments() {
     try_process_groups ${1}
     try_process_home_directory ${1}
     try_process_shared_directory ${1}
-    try_process_coredump_directory ${1}
+    argsparse_is_option_set "isolated" || try_process_coredump_directory ${1}
     try_process_timezone ${1}
     try_process_ulimit ${1}
     try_process_pids_limit ${1}
-    try_process_journal ${1}
-    try_process_keyring ${1}
-    try_process_system_bus ${1}
-    try_process_session_bus ${1}
-    try_process_dconf ${1}
-    try_process_accessibility ${1}
+    argsparse_is_option_set "isolated" || try_process_journal ${1}
+    argsparse_is_option_set "isolated" || try_process_keyring ${1}
+    argsparse_is_option_set "isolated" || try_process_system_bus ${1}
+    argsparse_is_option_set "isolated" || try_process_session_bus ${1}
+    argsparse_is_option_set "isolated" || try_process_dconf ${1}
+    argsparse_is_option_set "isolated" || try_process_accessibility ${1}
     try_process_themes ${1}
     try_process_icons ${1}
     try_process_fonts ${1}
-    try_process_dri ${1}
-    try_process_nvidia_gpu ${1}
-    try_process_x11 ${1}
-    try_process_pulseaudio ${1}
+    argsparse_is_option_set "isolated" || try_process_dri ${1}
+    argsparse_is_option_set "isolated" || try_process_nvidia_gpu ${1}
+    argsparse_is_option_set "isolated" || try_process_x11 ${1}
+    argsparse_is_option_set "isolated" || try_process_pulseaudio ${1}
     # wk: the host podman socket is a sandbox escape under rootful podman.
     argsparse_is_option_set "unsafe-caps" && try_process_podman ${1}
     set -o nounset
