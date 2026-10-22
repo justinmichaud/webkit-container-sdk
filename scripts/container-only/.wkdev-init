@@ -194,6 +194,9 @@ try_setup_sudoers_file() {
     if ! grep --quiet "${container_user_name} ALL = (root) NOPASSWD:ALL" "${sudoers_file}"; then
         echo "${container_user_name} ALL = (root) NOPASSWD:ALL" >> "${sudoers_file}"
     fi
+
+    # visudo -c refuses any other mode for a sudoers.d file
+    chmod 0440 "${sudoers_file}"
 }
 
 try_setup_run_user_directory() {
