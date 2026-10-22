@@ -430,11 +430,13 @@ build_podman_create_arguments() {
     # Add 'SYS_PTRACE' support, to be able to use gdb.
     arguments+=("--cap-add=SYS_PTRACE")
 
-    # Add 'NET_RAW' support, to be able to use ping
-    arguments+=("--cap-add=NET_RAW")
-
-    # Add 'SYS_ADMIN' support, to be able to use CPU profiiling.
-    arguments+=("--cap-add=SYS_ADMIN")
+    # NET_RAW (ping) and SYS_ADMIN (CPU profiling) are opt-in. SYS_ADMIN in
+    # particular lets a container modify the host's nftables ruleset, which
+    # would make the workspace egress policy unenforceable.
+    if argsparse_is_option_set "unsafe-caps"; then
+        arguments+=("--cap-add=NET_RAW")
+        arguments+=("--cap-add=SYS_ADMIN")
+    fi
 
     # Set container name & hostname & workdir.
     arguments+=("--name" "${container_name}")
@@ -481,11 +483,14 @@ build_podman_create_arguments() {
     # Disable SELinux isolation.
     arguments+=("--security-opt" "label=disable")
 
-    # Allow for unprivileged user namespaces (bwrap) to work.
-    arguments+=("--security-opt" "unmask=ALL")
-
-    # Required for rr to work.
-    arguments+=("--security-opt" "seccomp=unconfined")
+    # unmask=ALL re-exposes /proc and /sys paths the runtime masks by default;
+    # seccomp=unconfined removes the syscall filter. Both are needed for bwrap
+    # and rr, and both substantially widen the sandbox, so they follow the same
+    # opt-in as the capabilities above.
+    if argsparse_is_option_set "unsafe-caps"; then
+        arguments+=("--security-opt" "unmask=ALL")
+        arguments+=("--security-opt" "seccomp=unconfined")
+    fi
 
     # Always set XDG_RUNTIME_DIR to the same value.
     arguments+=("--env" "XDG_RUNTIME_DIR=/run/user/${host_user_id}")
