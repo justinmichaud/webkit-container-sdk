@@ -547,6 +547,13 @@ build_podman_create_arguments() {
     try_process_podman ${1}
     set -o nounset
 
+    # Caller-supplied podman flags. Must come before the image name, since
+    # everything after it is the container's own argv.
+    additional_flags="${program_options["additional-flags"]:-}"
+    if [ -n "${additional_flags}" ]; then
+        arguments+=(${additional_flags})
+    fi
+
     arguments+=("${sdk_repo_qualified}:${container_tag}")
 
     # Entry point
