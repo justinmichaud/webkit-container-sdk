@@ -107,6 +107,27 @@ try_install_additional_packages() {
     done
 }
 
+try_ensure_user_exists() {
+
+    # wk: create the user if podman did not (the image userdel's uid 1000
+    # for rootless keep-id; under rootful podman nothing recreates it).
+    if getent passwd "${container_user_name}" >/dev/null; then
+        return 0
+    fi
+
+    # Ids from whoever owns the bind-mounted home: rootful podman maps uids
+    # 1:1, so these must match the host side or nothing here is writable.
+    local _uid _gid
+    _uid=$(stat -c %u "/home/${container_user_name}") || return 1
+    _gid=$(stat -c %g "/home/${container_user_name}") || return 1
+
+    task_step "Creating user ${container_user_name} (${_uid}:${_gid})"
+    groupadd --force --gid "${_gid}" "${container_group_name}" || return 1
+    useradd --uid "${_uid}" --gid "${_gid}" --no-create-home \
+            --home-dir "/home/${container_user_name}" \
+            --shell /bin/bash "${container_user_name}"
+}
+
 try_switch_shell_for_user() {
 
     if ! grep "${container_user_name}" /etc/passwd | grep --quiet "${container_shell}"; then
@@ -246,6 +267,7 @@ TASKS=(
     "try_install_shell_package"
     "try_install_optional_drivers"
     "try_install_additional_packages"
+    "try_ensure_user_exists"
     "try_switch_shell_for_user"
     "try_setup_setgid_subuid_files"
     "try_setup_sudoers_file"
