@@ -263,10 +263,10 @@ sleep_forever() {
 
 TASKS=(
     "try_copy_hosts_file"
-    "try_update_apt_cache"
-    "try_install_shell_package"
-    "try_install_optional_drivers"
-    "try_install_additional_packages"
+    $([ -n "${WKDEV_OFFLINE:-}" ] || echo "try_update_apt_cache")
+    $([ -n "${WKDEV_OFFLINE:-}" ] || echo "try_install_shell_package")
+    $([ -n "${WKDEV_OFFLINE:-}" ] || echo "try_install_optional_drivers")
+    $([ -n "${WKDEV_OFFLINE:-}" ] || echo "try_install_additional_packages")
     "try_ensure_user_exists"
     "try_switch_shell_for_user"
     "try_setup_setgid_subuid_files"
