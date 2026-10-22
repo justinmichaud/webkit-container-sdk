@@ -28,6 +28,7 @@ argsparse_use_option no-pull      "Do not login or pull images."
 argsparse_use_option list-tags    "List image tags published to the registry."
 argsparse_use_option version:     "Image version (<major>.<minor>, <major>.<minor>-v<count>-<gitsha>, or pr-<PR-number>-<gitsha>) to use, instead of the version pinned in this checkout. A bare <major>.<minor> resolves to the highest published v<count> for that branch. The pr-* form selects a per-PR build pushed by CI. Pulled from the registry on demand."
 argsparse_use_option =arch:       "Container architecture."
+argsparse_use_option =image: "Exact image to use (repository:tag), instead of resolving one from the SDK version"
 argsparse_use_option additional-flags: "Additional flags to pass directly to podman create"
 argsparse_use_option network: "Container network (default: host)" default:host
 argsparse_use_option unsafe-caps "Add SYS_ADMIN/NET_RAW, host podman socket, and disable seccomp (unsafe in a sandbox)"
@@ -512,6 +513,13 @@ build_podman_create_arguments() {
         arguments+=("--pull=never")
     else
         arguments+=("--pull=newer")
+    fi
+
+    # wk: an explicitly pinned image, which no version resolution or
+    # architecture fallback may then second-guess. See sdk-patches/apply.sh 12.
+    if argsparse_is_option_set "image"; then
+        sdk_repo_qualified="${program_options["image"]%:*}"
+        container_tag="${program_options["image"]##*:}"
     fi
 
     if argsparse_is_option_set "arch"; then
