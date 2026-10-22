@@ -175,7 +175,9 @@ run() {
     if argsparse_is_option_set "root"; then
         podman_exec_arguments+=("--user" "0:0")
     else
-        podman_exec_arguments+=("--user" "$(id --user --real):$(id --group --real)")
+        # wk: use the container's own user. WKDEV_CONTAINER_USER is set by the
+        # caller; the fallback is the uid the image's user is created with.
+        podman_exec_arguments+=("--user" "${WKDEV_CONTAINER_UID:-1000}:${WKDEV_CONTAINER_GID:-1000}")
     fi
 
     # Disable the detach key binding so that Ctrl+P (readline shortcut for history backwards) works
@@ -199,7 +201,9 @@ run() {
     if argsparse_is_option_set "exec"; then
         podman_exec_arguments+=("${program_params[@]}")
     else
-        podman_exec_arguments+=("/usr/bin/env" "USER=$(id --user --name)" "${SHELL}" "--login")
+        # wk: ${SHELL} is the *host* shell path and need not exist in the
+        # container; and USER must be the container account, not the caller.
+        podman_exec_arguments+=("/usr/bin/env" "USER=${WKDEV_CONTAINER_USER:-$(id --user --name)}" "${WKDEV_CONTAINER_SHELL:-/bin/bash}" "--login")
     fi
 
     # --interactive is needed so that the process has access to *any* stdin.
